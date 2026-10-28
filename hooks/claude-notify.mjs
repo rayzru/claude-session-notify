@@ -1179,12 +1179,14 @@ function pluginActive() {
 
 /** Hooks wired by hand in settings files — the plugin's own hooks are not listed there. */
 function settingsHooks() {
-  const files = [
+  // A set: run from the home folder — as a remote window's extension is — the project's
+  // settings are the user's, and read twice they look wired twice.
+  const files = new Set([
     join(homedir(), '.claude', 'settings.json'),
     join(homedir(), '.claude', 'settings.local.json'),
     join(process.cwd(), '.claude', 'settings.json'),
     join(process.cwd(), '.claude', 'settings.local.json'),
-  ]
+  ])
   const found = []
   for (const file of files) {
     const data = readJsonFile(file)
