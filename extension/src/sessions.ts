@@ -429,7 +429,7 @@ export function ago(at: number, now = Date.now()): string {
   return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }
 
-interface Link { pid: number; folders?: string[]; workspaceFile?: string }
+interface Link { pid: number; folders?: string[]; workspaceFile?: string; bridge?: string }
 
 /** Same rule as the notifier: the window whose workspace holds the session's folder. */
 export function ownerOf(cwd: string, linksDir: string): Link | null {
@@ -440,7 +440,8 @@ export function ownerOf(cwd: string, linksDir: string): Link | null {
   let bestLength = -1
   for (const name of names) {
     const link: Link | null = readJson(join(linksDir, name))
-    if (!link) continue
+    // A bridge's folders are paths on another machine.
+    if (!link || link.bridge) continue
     for (const folder of link.folders || []) {
       const root = folder.replace(/[/\\]+$/, '')
       if ((dir === root || dir.startsWith(root + '/')) && root.length > bestLength) {

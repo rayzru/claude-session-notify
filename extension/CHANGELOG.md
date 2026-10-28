@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- System notifications from a remote machine. In a window over Remote-SSH or in a Dev
+  Container, Claude Code, its hooks and this extension all run on the remote machine, which
+  has no screen: the system notification went nowhere, and only the one inside VS Code
+  appeared. A new companion extension, **Notify for Claude Code — Bridge**, runs on your Mac
+  instead. The extension hands it each notification through VS Code, it shows it with the
+  same notifying app, and a click raises the window and opens the session, as in a local
+  window. Going back to a session takes its notification back from the Mac too. In a remote
+  window without the bridge, the extension offers to install it, once.
+- In a remote window, *Allow notifications*, the notification settings and the setup page's
+  checks ask the Mac through the bridge, and *Check that notifications work* reports on both
+  halves.
+- The extension is published for Linux too, so it can be installed on the remote side of a
+  window. Notifications on a Linux desktop are still not covered.
+
 ## 0.2.6
 
 - The spinner of a running session turns about its own centre. A spinning codicon in the

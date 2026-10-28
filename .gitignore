@@ -3,3 +3,6 @@ node_modules/
 extension/dist/
 extension/test/.build/
 *.vsix
+extension/bridge/dist/
+extension/bridge/LICENSE
+extension/bridge/media/

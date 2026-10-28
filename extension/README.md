@@ -94,7 +94,8 @@ opens by itself.
 ## Requirements
 
 - **macOS 13 or later.** Windows and Linux are planned (see [Plans](#plans)); this release
-  installs only on macOS.
+  installs only on macOS — and on Linux as the remote side of a window, see
+  [Remote windows](#remote-windows).
 - The official **Claude Code** extension for VS Code.
 
 That is all. The extension brings the rest: a small app of its own that shows the
@@ -186,6 +187,27 @@ confirmation prompt for external links never appears.
 
 Nothing leaves your machine. There is no telemetry.
 
+## Remote windows
+
+Over Remote-SSH or in a Dev Container, Claude Code runs on the remote machine, and so do its
+hooks and this extension: they have to be where the sessions are. That machine has no screen
+for a system notification. The notifications inside VS Code still appear, because VS Code
+draws them on your Mac, but the system ones need a part that runs on the Mac.
+
+That part is a second, small extension: **Notify for Claude Code — Bridge**. In a remote
+window without it, Notify for Claude Code offers to install it; VS Code puts it on your Mac,
+not on the remote machine. Nothing to set up beyond that.
+
+VS Code carries commands between the two halves of a window, the one on the remote machine
+and the one on your Mac, so no port, tunnel or token crosses the network. The extension hands
+the bridge each notification; the bridge shows it with the same notifying app, installed on
+the Mac. A click runs the notifier on the Mac, which raises the window through VS Code's own
+command line, by the folder's remote address, and asks the bridge, and through it the
+extension on the remote machine, to open the session. A new prompt in a session takes its
+notification back from the Mac.
+
+The remote machine needs no Node.js either: the hooks run with the VS Code server's runtime.
+
 ## Uninstalling
 
 Uninstalling leaves nothing behind: the hooks, the notifications still on screen, the
@@ -217,6 +239,8 @@ Notifications, with whatever you allowed, so a reinstall does not ask again.
   If a future release renames it, clicks fall back to a `vscode://` link, which works
   after VS Code asks once.
 - **Sessions in a plain terminal** have no tab to switch to. They still notify.
+- **A remote machine reaches your Mac only through an open window.** With no VS Code window
+  connected to it, a session there has nowhere to send a system notification.
 - **VS Code cannot take back a notification it has shown.** A newer one does not replace
   the older inside VS Code, and going back to the session does not clear it; old ones stay in
   the notification list until you clear them. Their button still opens the right session.

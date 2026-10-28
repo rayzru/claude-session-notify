@@ -13,6 +13,9 @@
  * Modes:
  *   (no args)       hook mode; reads the hook payload as JSON on stdin
  *   --show <json>   internal; the detached presenter process
+ *   --relay <json>  internal; shows a notification relayed from a remote machine
+ *   --dismiss <group>
+ *                   internal; takes a relayed notification back
  *   --test          send a sample notification
  *   --config        print the effective configuration and the resolved language
  *   --doctor        check the environment and report what is broken
@@ -249,6 +252,8 @@ function safeId(value) {
 
 const turnPath = (id) => join(STATE_DIR, `turn-${safeId(id)}`)
 const pidPath = (group) => join(STATE_DIR, `pid-${safeId(group)}`)
+// A notification handed to another computer, so a new prompt knows to take it back.
+const relayedPath = (group) => join(STATE_DIR, `relayed-${safeId(group)}`)
 
 function writeState(path, body) {
   try {
@@ -286,7 +291,7 @@ function sweepStale(hours) {
   let entries = []
   try { entries = readdirSync(STATE_DIR) } catch { return }
   for (const name of entries) {
-    if (!name.startsWith('pid-') && !name.startsWith('turn-')) continue
+    if (!name.startsWith('pid-') && !name.startsWith('turn-') && !name.startsWith('relayed-')) continue
     const path = join(STATE_DIR, name)
     try {
       if (statSync(path).mtimeMs > cutoff) continue
@@ -328,7 +333,8 @@ function editorLinks() {
  * tab. No owner means no window has it open — better to say so than to guess.
  */
 function ownerLink(cwd) {
-  const links = editorLinks()
+  // A bridge's folders are paths on another machine: a session here never lives in them.
+  const links = editorLinks().filter((link) => !link.bridge)
   if (!links.length) return null
   const dir = String(cwd || '').replace(/[/\\]+$/, '')
   let best = null
@@ -346,10 +352,23 @@ function ownerLink(cwd) {
 }
 
 /**
+ * Which window a relayed notification came from: its folder's remote address, which names
+ * the machine too. Paths alone do not — two containers may both hold /workspaces/app.
+ */
+const linkAddress = (link) => link.workspaceUri || link.folderUri || ''
+
+/**
  * An extension cannot bring its own window to the front — VS Code has no API for it.
  * Opening the window's folder does: VS Code focuses the window that already has it.
+ * A bridge's window holds folders of another machine, which only VS Code's own command
+ * line can name: by their remote address.
  */
 function raiseWindow(link) {
+  if (link.cli && (link.workspaceUri || link.folderUri)) {
+    const args = link.workspaceUri ? ['--file-uri', link.workspaceUri] : ['--folder-uri', link.folderUri]
+    spawnSync(link.cli, args, { stdio: 'ignore', timeout: 5000 })
+    return
+  }
   if (platform() !== 'darwin') return
   const target = link.workspaceFile || (link.folders || [])[0]
   if (!target || !existsSync(target)) return
@@ -399,11 +418,14 @@ function postToEditor(link, path, body, timeoutMs) {
 async function focusOrOpen(o) {
   // With the extension running, only the owning window may take the click. The bare
   // vscode:// link is kept for when the extension is not installed at all.
-  const extensionPresent = editorLinks().length > 0
+  const extensionPresent = editorLinks().some((link) => !link.bridge)
   const where = o.root || o.cwd
-  const link = ownerLink(where)
-  if (extensionPresent && !link) {
-    debug(`focus session=${o.sessionId}: no window has ${where} open`)
+  // Relayed from a remote window: back to that window and no other, through its bridge.
+  const link = o.window
+    ? editorLinks().find((l) => l.bridge && linkAddress(l) === o.window) || null
+    : ownerLink(where)
+  if ((extensionPresent || o.window) && !link) {
+    debug(`focus session=${o.sessionId}: no window has ${o.window || where} open`)
     return 'no-window'
   }
   if (link && UUID.test(String(o.sessionId))) {
@@ -558,17 +580,57 @@ function editorTarget(o) {
   }
 }
 
-function present(o) {
+/**
+ * A window of VS Code on a remote machine — over SSH, in WSL or a container — runs hooks
+ * where the sessions are, and that machine has no screen to show a notification on. The
+ * window hands it to its bridge, on the computer in front of the user. A session no window
+ * holds, one in a plain terminal, still goes there: it is the only screen there is.
+ */
+function relayTarget(o) {
+  const owner = ownerLink(o.root || o.cwd)
+  if (owner) return owner.remote ? owner : null
+  return editorLinks().find((link) => link.remote) || null
+}
+
+/** Takes a session's notification back from the computer it was relayed to. */
+async function dismissRelayed(group) {
+  if (!existsSync(relayedPath(group))) return
+  const remote = editorLinks().filter((link) => link.remote)
+  const done = await Promise.all(remote.map((link) => postToEditor(link, '/dismiss', { group }, 1500)))
+  debug(`dismiss relayed group=${group} windows=${remote.length} ok=${done.filter(Boolean).length}`)
+  // Taken back only once the window it went to says so, not another computer's; until
+  // then the next prompt tries again.
+  const to = readFileSync(relayedPath(group), 'utf8')
+  if (remote.some((link, i) => done[i] && JSON.stringify(link.folders || []) === to)) {
+    try { unlinkSync(relayedPath(group)) } catch {}
+  }
+}
+
+async function present(o) {
   if (o.debug) debugOn = true
   const plan = buildPlan(o)
-  const editor = editorTarget(o)
+  // Relayed here already: shown on this machine, never passed on again.
+  const editor = o.relayed ? null : editorTarget(o)
+  const relay = o.relayed ? null : relayTarget(o)
   if (process.env.CLAUDE_NOTIFY_DRYRUN === '1') {
-    console.log(JSON.stringify({ platform: platform(), ...plan, editor: editor && { window: editor.link.folders, body: editor.body } }, null, 2))
+    console.log(JSON.stringify({
+      platform: platform(), ...plan,
+      editor: editor && { window: editor.link.folders, body: editor.body },
+      relay: relay && { window: relay.folders },
+    }, null, 2))
     return
   }
   if (editor) {
     postToEditor(editor.link, '/notify', editor.body, 1500)
       .then((ok) => debug(`editor notification window=${editor.link.pid} ok=${ok} group=${o.group}`))
+  }
+  if (relay) {
+    const ok = await postToEditor(relay, '/relay', o, 4000)
+    debug(`relayed window=${relay.pid} ok=${ok} group=${o.group}`)
+    if (ok) {
+      writeState(relayedPath(o.group), JSON.stringify(relay.folders || []))
+      return
+    }
   }
   if (!plan) return
   if (!plan.waits) {
@@ -808,11 +870,12 @@ const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
  * even — so it names a node binary and a script that will still be there: the copy the
  * VS Code extension keeps at a fixed path when present, this file otherwise.
  */
-function focusCommandFor(sessionId, root) {
-  if (existsSync(RUNNER)) return [RUNNER, '--focus', sessionId, root || ''].map(shellQuote).join(' ')
+function focusCommandFor(sessionId, root, window = '') {
+  const args = ['--focus', sessionId, root || '', ...(window ? ['--window', window] : [])]
+  if (existsSync(RUNNER)) return [RUNNER, ...args].map(shellQuote).join(' ')
   const stable = join(homedir(), '.claude', 'claude-notify', 'claude-notify.mjs')
   const script = existsSync(stable) ? stable : SELF
-  return [process.execPath, script, '--focus', sessionId, root || ''].map(shellQuote).join(' ')
+  return [process.execPath, script, ...args].map(shellQuote).join(' ')
 }
 
 /**
@@ -944,6 +1007,7 @@ async function hookMode() {
     // You are back in this session: whatever it announced before is old news, and an
     // old notification left in the stack is one a click can land on by mistake.
     killWaiting(pidPath(`claude-${safeId(sessionId)}`))
+    await dismissRelayed(`claude-${safeId(sessionId)}`)
     return
   }
   if (data.agent_id) return // subagents stay silent; only the main agent reports
@@ -992,7 +1056,19 @@ function main() {
   const [mode, arg] = process.argv.slice(2)
 
   if (mode === '--show') {
-    present(JSON.parse(arg))
+    return present(JSON.parse(arg))
+  }
+  if (mode === '--relay') {
+    // From a window whose sessions run on another machine. A click has to run a command
+    // of this one, which reaches that window back through its bridge.
+    const o = JSON.parse(arg)
+    o.relayed = true
+    delete o.notifierPath
+    o.focusCommand = o.uri ? focusCommandFor(o.sessionId, o.root || o.cwd, o.window) : ''
+    return present(o)
+  }
+  if (mode === '--dismiss') {
+    killWaiting(pidPath(arg))
     return
   }
   if (mode === '--help' || mode === '-h') {
@@ -1049,10 +1125,12 @@ function main() {
     if (cfg.debug) debugOn = true
     const entry = readJsonFile(sessionPath(arg)) || {}
     const cwd = process.argv[4] || entry.cwd || ''
+    const at = process.argv.indexOf('--window')
     return focusOrOpen({
       sessionId: arg,
       cwd,
       root: entry.root || process.argv[4] || '',
+      window: at > 4 ? process.argv[at + 1] || '' : '',
       uri: UUID.test(String(arg)) ? `${cfg.uriScheme}://${cfg.extensionId}/open?session=${arg}` : '',
     }).then((outcome) => { process.stdout.write(`${outcome}\n`) })
   }
@@ -1173,7 +1251,10 @@ function doctor() {
   if (pausedUntil('all')) warn(`notifications are ${describePause('all')} — \`--resume\` turns them back on`)
   if (pausedUntil('editor')) say('    ', `notifications inside VS Code are ${describePause('editor')}`)
 
-  if (platform() !== 'darwin') {
+  const remote = editorLinks().filter((link) => link.remote)
+  if (remote.length) {
+    ok(`VS Code reaches this machine remotely (${[...new Set(remote.map((link) => link.remote))].join(', ')}) — system notifications are shown on the computer in front of you, by the bridge extension there`)
+  } else if (platform() !== 'darwin') {
     warn(`platform ${platform()} is not covered: this plugin targets macOS with VS Code`)
   } else {
     const notifier = findNotifier()
@@ -1224,8 +1305,8 @@ function doctor() {
 
   if (!runsInEditor()) {
     warn('not running under the VS Code extension — notifications still fire, but there is no tab to click through to')
-  } else if (editorLinks().length) {
-    const windows = editorLinks().length
+  } else if (editorLinks().some((link) => !link.bridge)) {
+    const windows = editorLinks().filter((link) => !link.bridge).length
     ok(`running under the editor (${process.env.CLAUDE_CODE_ENTRYPOINT || 'vscode'})`)
     ok(`The Notify for Claude Code extension is listening in ${windows} window${windows > 1 ? 's' : ''} — clicks go to the window that owns the session`)
   } else {

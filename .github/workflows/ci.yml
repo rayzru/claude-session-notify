@@ -21,7 +21,9 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit -p .
       - run: npm test
-      - name: The extension still packages, with its notifying app
+      - name: The extension and its bridge still package, with the notifying app
         run: |
           npm run package -- --target darwin-arm64 --out claude-session-notify.vsix
           unzip -l claude-session-notify.vsix | grep -q 'notify-helper/Contents/MacOS/notify'
+          npm run package:bridge -- --target darwin-arm64 --out ../claude-session-notify-bridge.vsix
+          unzip -l claude-session-notify-bridge.vsix | grep -q 'notify-helper/Contents/MacOS/notify'
