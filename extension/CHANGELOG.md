@@ -15,6 +15,8 @@
   halves.
 - The extension is published for Linux too, so it can be installed on the remote side of a
   window. Notifications on a Linux desktop are still not covered.
+- *Check that notifications work* no longer reports the hooks as wired twice when it runs
+  from the home folder, as a remote window's extension does.
 
 ## 0.2.6
 
