@@ -1,104 +1,64 @@
 # Notify for Claude Code
 
-A system notification when a Claude Code session finishes or needs you. A click opens that
-session in the window where it lives. Works in local windows and over Remote-SSH or in Dev
-Containers.
+Know when a Claude Code session finishes or needs you, and get back to it in one click.
 
 ![macOS notifications: one session done, another waiting for permission](media/readme/notification.png)
 
-## What it does
+## What you get
 
-- **Notifies** when a session finishes (*Done · 12 min — Fixed the flaky test…*), stops with
-  an error, or asks for a permission or an answer. Turns shorter than 45 seconds stay quiet:
-  you were watching them.
-- **Takes you back.** A click brings the session's window to the front with the session open,
-  in its tab or in the Claude sidebar.
-- **Shows every session** in the status bar: how many are running and how many are waiting,
-  across all windows. Click it for the list and pick one to go there.
+**A notification** when a session is done, stopped with an error, or waiting for a permission
+or an answer. It names the session and shows how its last answer began. A click brings that
+session's window to the front with the session open. Turns shorter than 45 seconds stay quiet:
+you were watching them.
 
-![The status bar: two sessions running; then one waiting for you](media/readme/statusbar.png)
+**The same notification inside VS Code**, in the window that holds the session.
 
-The same notification also appears inside the VS Code window that holds the session.
-Notifications can be paused for a while, all of them or only the ones inside VS Code.
+![The notification inside VS Code, with an Open session button](media/readme/toast.png)
 
-## Install
+**Every session in the status bar**: how many are running and how many are waiting for you,
+across all windows.
 
-Search for **Notify for Claude Code** in the Extensions view, or:
+![The status bar: two sessions running; then one waiting for you, highlighted](media/readme/statusbar.png)
 
-```sh
-code --install-extension rayz.claude-session-notify
-```
+Click it for the list. Pick a session to go there.
 
-Also on [Open VSX](https://open-vsx.org/extension/rayz/claude-session-notify).
-
-You need macOS 13 or later and the official Claude Code extension. Nothing else: the
-extension brings its own small notifying app and runs with VS Code's own runtime, so no
-Node.js or Homebrew.
-
-## Setup
-
-On first start a setup page opens (*Notify for Claude Code: Set up…* opens it again):
-
-1. **Connect to Claude Code** — adds four hooks to `~/.claude/settings.json`. Nothing else in
-   the file changes.
-2. **Allow notifications** — macOS asks once.
-3. Optional: set the *Persistent* style so notifications stay on screen, and allow them while
-   the screen is shared (macOS hides them in calls and recordings otherwise).
-
-If something does not arrive, run *Notify for Claude Code: Check that notifications work*.
-It names what is missing.
-
-## Remote windows
-
-Over Remote-SSH or in a Dev Container, Claude Code and this extension run on the remote
-machine, which has no screen. To get system notifications on your Mac, install a second small
-extension, **Notify for Claude Code — Bridge**. In a remote window the extension offers it
-once; VS Code installs it on your Mac. Clicks work as in a local window.
-
-## Settings
-
-| Setting | Default | |
-| --- | --- | --- |
-| `claudeNotify.enabled` | `true` | master switch |
-| `claudeNotify.minTurnSeconds` | `45` | shorter turns finish quietly (15 s to 2 min) |
-| `claudeNotify.events` | all | `done`, `error`, `waitingInput` |
-| `claudeNotify.sound` | `true` | |
-| `claudeNotify.editorNotifications` | `true` | also show notifications inside VS Code |
-| `claudeNotify.statusBar` | `true` | sessions in the status bar |
-
-All commands are under *Notify for Claude Code* in the Command Palette: go to a session,
-pause and resume, send a test notification, check, add or remove the hooks.
+![The session list: every Claude Code session in every window](media/readme/sessions.png)
 
 ## How it works
 
-Claude Code runs a small script on four hook events. The script times the turn and shows the
-notification with the extension's app, *Notify for Claude Code*, kept in
-`~/.claude/claude-notify/`. Each VS Code window listens on a local port guarded by a token; on
-a click the script finds the window whose folder holds the session and asks it to open the
-session through the Claude Code extension's own command.
+Claude Code reports what its sessions do through hooks. The extension adds four of them to
+`~/.claude/settings.json`: when you send a prompt, when a turn ends or fails, and when Claude
+asks for something. On each event a small script decides whether it is worth a notification
+and shows it with the extension's own notifying app. On a click, the script finds the VS Code
+window that holds the session and asks the Claude Code extension there to open it.
 
-In a remote window the script and the extension run on the remote machine. The extension
-passes each notification to the bridge on your Mac through VS Code itself, and the click comes
-back the same way. No port or tunnel crosses the network.
+Everything stays on your computer. No telemetry.
 
-Nothing leaves your computer. No telemetry.
+## Install
 
-## Uninstalling
+Search for **Notify for Claude Code** in the Extensions view, or run
+`code --install-extension rayz.claude-session-notify`. Also on
+[Open VSX](https://open-vsx.org/extension/rayz/claude-session-notify).
 
-Removes everything it added: hooks, notifications on screen, the app, the script and its
-state. VS Code does it after the next restart. Your `claudeNotify.*` settings and the
-macOS notification permission stay.
+Needs macOS 13 or later and the official Claude Code extension. Nothing else: no Node.js, no
+Homebrew.
 
-## Known limits
+A setup page opens on first start: connect to Claude Code, allow notifications, try it. If a
+notification does not arrive, run *Notify for Claude Code: Check that notifications work*.
 
-- macOS only. Linux and Windows desktops are not supported yet; the extension installs on
-  Linux only as the remote side of a window.
-- macOS hides notifications while the screen is shared or recorded, unless *System Settings →
-  Notifications → When mirroring or sharing the display* is on.
-- A session started in a plain terminal has no tab to go to. It still notifies.
-- A remote machine reaches your Mac only through an open VS Code window.
-- The command that opens a session belongs to the Claude Code extension and is not a public
-  API. If it changes, clicks fall back to a `vscode://` link, which VS Code confirms once.
+## Remote windows
+
+Over Remote-SSH or in a Dev Container, Claude Code runs on the remote machine, and the
+extension has to run there too. That machine has no screen, so a second small extension,
+**Notify for Claude Code — Bridge**, shows the notifications on your Mac. In a remote window
+the extension offers to install it. Clicks work the same way.
+
+## More
+
+- [Commands and settings](https://github.com/rayzru/claude-session-notify/blob/main/docs/commands-and-settings.md)
+- [How it works, in detail](https://github.com/rayzru/claude-session-notify/blob/main/docs/how-it-works.md)
+- [Known limits, uninstalling, plans](https://github.com/rayzru/claude-session-notify/blob/main/docs/limits.md)
+- [Changelog](https://github.com/rayzru/claude-session-notify/blob/main/extension/CHANGELOG.md)
 
 ## Support the project
 

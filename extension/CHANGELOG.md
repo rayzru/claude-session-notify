@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- A shorter extension page: what you get, with every picture, how it works in a few lines,
+  install and remote windows. Commands, settings, the details of how it works, limits and the
+  Claude Code plugin moved to [the documentation](https://github.com/rayzru/claude-session-notify/tree/main/docs).
+
 ## 0.3.0
 
 - System notifications from a remote machine. In a window over Remote-SSH or in a Dev
