@@ -3,10 +3,11 @@ name: Release
 # Push a tag naming the extension and the version in extension/package.json
 # (claude-session-notify@0.2.0) to cut a release:
 # the Claude Code plugin in this repository has versions of its own.
-# It is built for macOS only, as two packages — Apple silicon and Intel — that carry the same
-# universal notifying app; the Marketplace offers a package only on its platform. They go to
-# a GitHub release and to Open VSX; the VS Code Marketplace takes the same files by hand,
-# uploaded from the release page.
+# The extension is built for macOS — Apple silicon and Intel, both carrying the same universal
+# notifying app — and for Linux, where it runs as the remote side of a VS Code window; the
+# Marketplace offers a package only on its platform. The bridge, the remote window's half on
+# the user's Mac, is built for macOS alone. They go to a GitHub release and to Open VSX; the
+# VS Code Marketplace takes the same files by hand, uploaded from the release page.
 on:
   push:
     tags: ['claude-session-notify@*']
@@ -37,13 +38,22 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME, but extension/package.json says $version"
             exit 1
           fi
+          if [ "$(node -p "require('./bridge/package.json').version")" != "$version" ]; then
+            echo "::error::extension/bridge/package.json is not at $version"
+            exit 1
+          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-      - name: Package for Apple silicon and Intel
+      - name: Package for macOS and Linux, and the bridge for macOS
         run: |
-          for target in darwin-arm64 darwin-x64; do
+          for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
             vsix="claude-session-notify-$VERSION-$target.vsix"
             npm run package -- --target "$target" --out "$vsix"
+          done
+          for target in darwin-arm64 darwin-x64; do
+            vsix="claude-session-notify-bridge-$VERSION-$target.vsix"
+            npm run package:bridge -- --target "$target" --out "../$vsix"
             # Without the app a Mac would fall back to banners nobody can click.
+            unzip -l "claude-session-notify-$VERSION-$target.vsix" | grep -q 'notify-helper/Contents/MacOS/notify'
             unzip -l "$vsix" | grep -q 'notify-helper/Contents/MacOS/notify'
           done
       # Re-running a failed job must not trip over a release it already made.
@@ -54,7 +64,7 @@ jobs:
           awk -v head="## $VERSION" '$0 == head { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "$VERSION" --notes-file notes.md
-          gh release upload "$GITHUB_REF_NAME" claude-session-notify-"$VERSION"-darwin-*.vsix --clobber
+          gh release upload "$GITHUB_REF_NAME" claude-session-notify-*"$VERSION"-*.vsix --clobber
       # Open VSX trusts this workflow once the namespace owner has registered it (RELEASING.md);
       # the repository variable says that has happened. An OVSX_PAT secret is the fallback,
       # also when trusted publishing is refused. Neither: say so on the run, rather than leave
@@ -64,7 +74,7 @@ jobs:
           TRUSTED: ${{ vars.OPEN_VSX_TRUSTED }}
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
-          packages=(claude-session-notify-"$VERSION"-darwin-*.vsix)
+          packages=(claude-session-notify-*"$VERSION"-*.vsix)
           if [ "$TRUSTED" = true ] && npx ovsx publish --packagePath "${packages[@]}" --skip-duplicate --trusted-publishing; then
             exit 0
           fi

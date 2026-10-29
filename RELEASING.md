@@ -6,8 +6,10 @@ This repository ships two things with versions of their own: the VS Code extensi
 
 ## The VS Code extension
 
-1. Raise `version` in `extension/package.json` and add a `## <version>` section at the top of
-   `extension/CHANGELOG.md` — the release notes are taken from it.
+1. Raise `version` in `extension/package.json` and in `extension/bridge/package.json` — the
+   bridge, the remote window's half on the user's Mac, is released with the extension at the
+   same version — and add a `## <version>` section at the top of `extension/CHANGELOG.md`;
+   the release notes are taken from it.
 2. Merge to `main`, then tag and push:
 
    ```sh
@@ -16,11 +18,15 @@ This repository ships two things with versions of their own: the VS Code extensi
    ```
 
 3. The *Release* workflow builds on macOS, because the notifying app is compiled with Swift.
-   It makes two packages, `darwin-arm64` and `darwin-x64`, both carrying the same universal
-   app, creates the GitHub release with both attached, and publishes them to Open VSX.
-4. **VS Code Marketplace, by hand:** download both `.vsix` files from the release, then on
+   It makes the extension's packages for `darwin-arm64` and `darwin-x64`, both carrying the
+   same universal app, and for `linux-x64` and `linux-arm64`, where it runs on the remote side
+   of a window; and the bridge's for `darwin-arm64` and `darwin-x64`. It creates the GitHub
+   release with all of them attached and publishes them to Open VSX.
+4. **VS Code Marketplace, by hand:** download the `.vsix` files from the release, then on
    [the publisher page](https://marketplace.visualstudio.com/manage/publishers/rayz) open
-   the extension's **⋯** menu → **Update** and upload them. Microsoft's global access tokens
+   each extension's **⋯** menu → **Update** and upload its packages. The bridge
+   (`claude-session-notify-bridge-*`) is an extension of its own there; the first time, it is
+   uploaded as a new extension. Microsoft's global access tokens
    stop working on 1 December 2026, which is why this step is not automated.
 
 Before tagging, `cd extension && npm test && npm run package` builds and checks the same

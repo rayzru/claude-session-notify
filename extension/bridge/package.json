@@ -1,0 +1,90 @@
+{
+  "name": "claude-session-notify-bridge",
+  "displayName": "Notify for Claude Code — Bridge",
+  "description": "System notifications from Notify for Claude Code when Claude Code runs on a remote machine — over SSH, in WSL or a container — shown on the computer in front of you.",
+  "version": "0.3.0",
+  "publisher": "rayz",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "notifications",
+    "remote"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rayzru/claude-session-notify.git",
+    "directory": "extension/bridge"
+  },
+  "homepage": "https://github.com/rayzru/claude-session-notify/tree/main/extension/bridge#readme",
+  "bugs": {
+    "url": "https://github.com/rayzru/claude-session-notify/issues"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./dist/bridge.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeNotifyBridge.present",
+        "title": "Show a relayed notification",
+        "category": "Notify for Claude Code — Bridge"
+      },
+      {
+        "command": "claudeNotifyBridge.dismiss",
+        "title": "Take a relayed notification back",
+        "category": "Notify for Claude Code — Bridge"
+      },
+      {
+        "command": "claudeNotifyBridge.status",
+        "title": "Report notification status",
+        "category": "Notify for Claude Code — Bridge"
+      },
+      {
+        "command": "claudeNotifyBridge.authorize",
+        "title": "Ask to allow notifications",
+        "category": "Notify for Claude Code — Bridge"
+      },
+      {
+        "command": "claudeNotifyBridge.openSettings",
+        "title": "Open notification settings",
+        "category": "Notify for Claude Code — Bridge"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "claudeNotifyBridge.present",
+          "when": "false"
+        },
+        {
+          "command": "claudeNotifyBridge.dismiss",
+          "when": "false"
+        },
+        {
+          "command": "claudeNotifyBridge.status",
+          "when": "false"
+        },
+        {
+          "command": "claudeNotifyBridge.authorize",
+          "when": "false"
+        },
+        {
+          "command": "claudeNotifyBridge.openSettings",
+          "when": "false"
+        }
+      ]
+    }
+  }
+}

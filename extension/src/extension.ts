@@ -6,12 +6,13 @@ import { basename, dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import * as vscode from 'vscode'
 import {
-  helperPath, hooksOutdated, hooksWired, installHelper, installScript, legacyLinkPath, linkPath,
+  hooksOutdated, hooksWired, installHelper, installScript, legacyLinkPath, linkPath,
   linksDir, pausedUntil, pausePath, pluginInstalled, runnerPath, sessionsDir, setPause, stableScriptPath,
   unwireHooks, wireHooks, writeConfig, writeRunner, type PauseScope,
 } from './wiring'
 import { ago, lastPrompted, markSeen, modelName, ownerOf, readDetails, readLive, readSessions, tokens, windowName, type Session } from './sessions'
 import { tabShowsTitle, toastFor } from './toast'
+import { notifyStatus, openNotificationSettings as openSystemSettings, runHelper, type HelperResult, type NotifyStatus } from './macos'
 
 /**
  * The notifier runs outside the editor — it is a hook, spawned per event, and macOS
@@ -26,6 +27,11 @@ import { tabShowsTitle, toastFor } from './toast'
  * Going through the socket instead of a `vscode://` link matters: VS Code guards external
  * links with a confirmation prompt, and until it is answered a click only raises the
  * window, which looks exactly like a link pointing at the wrong session.
+ *
+ * In a remote window — SSH, WSL, a container — all of this runs on the remote machine,
+ * beside the sessions, and that machine has no screen. The system's side then goes to the
+ * bridge extension on the computer in front of the user (see bridge.ts), by commands VS Code
+ * carries between the window's two extension hosts.
  */
 const HOME = homedir()
 const LINK_FILE = linkPath(HOME, process.pid)
@@ -40,7 +46,6 @@ const REMINDED_KEY = 'claudeNotify.connectRemindedAt'
 /** How long a turn must last to be announced, as offered in the settings and the picker. */
 const QUIET_CHOICES = [15, 30, 45, 60, 90, 120]
 const QUIET_DEFAULT = 45
-const HELPER_ID = 'ru.rayz.notify-for-claude-code'
 /**
  * The Claude Code extension's own "open this session" — the one that decides where. With
  * `programmatic: 'honor-preferred-location'` it reveals the session's tab if it has one,
@@ -54,6 +59,7 @@ const HELPER_ID = 'ru.rayz.notify-for-claude-code'
  */
 const CLAUDE_OPEN_SESSION = 'claude-vscode.editor.open'
 const CLAUDE_OPEN_IN_EDITOR = 'claude-vscode.primaryEditor.open'
+const BRIDGE_ID = 'rayz.claude-session-notify-bridge'
 
 let server: Server | undefined
 let statusBar: vscode.StatusBarItem | undefined
@@ -65,6 +71,8 @@ let linkInfo: { port: number; token: string } | undefined
 let setupWalkthrough = ''
 /** Set on connecting: the first session to report after it proves the hooks work. */
 let connectedAt = 0
+/** Offered once per window: notifications inside VS Code keep coming without it. */
+let bridgeOffered = false
 
 function log(line: string): void {
   output?.appendLine(`${new Date().toISOString().slice(11, 19)}  ${line}`)
@@ -370,6 +378,44 @@ function notifyHere(context: vscode.ExtensionContext, body: any): boolean {
   return true
 }
 
+/* ------------------------------------------------------------- the bridge */
+
+/** Running on a remote machine, beside the sessions: the system's side is the bridge's. */
+const remote = () => Boolean(vscode.env.remoteName)
+
+/** A command of the bridge, on the computer in front of the user; undefined when there is none. */
+async function bridge<T>(command: string, ...args: unknown[]): Promise<T | undefined> {
+  try {
+    return await vscode.commands.executeCommand<T>(`claudeNotifyBridge.${command}`, ...args)
+  } catch (err) {
+    log(`the bridge did not answer ${command}: ${String(err)}`)
+    void offerBridge()
+    return undefined
+  }
+}
+
+async function offerBridge(): Promise<void> {
+  if (bridgeOffered) return
+  bridgeOffered = true
+  const install = 'Install the bridge'
+  const answer = await vscode.window.showWarningMessage(
+    `Notify for Claude Code runs on the remote machine here (${vscode.env.remoteName}), which has no screen for system notifications. Its bridge extension shows them on this computer. Without it, notifications only appear inside VS Code.`,
+    install)
+  if (answer !== install) return
+  try {
+    // A UI extension: VS Code installs it on this computer, not on the remote machine.
+    await vscode.commands.executeCommand('workbench.extensions.installExtension', BRIDGE_ID)
+  } catch (err) {
+    log(`could not install ${BRIDGE_ID}: ${String(err)}`)
+    await vscode.commands.executeCommand('workbench.extensions.search', BRIDGE_ID)
+  }
+}
+
+/** What macOS says about notifications, wherever the user's computer is. */
+async function systemStatus(): Promise<NotifyStatus | undefined> {
+  return remote() ? bridge<NotifyStatus>('status') : notifyStatus(HOME)
+}
+
 function startServer(context: vscode.ExtensionContext, token: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -386,6 +432,15 @@ function startServer(context: vscode.ExtensionContext, token: string): Promise<n
       }
       if (req.url === '/notify') {
         const ok = notifyHere(context, body)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok }))
+        return
+      }
+      // Only a remote window is sent these: the notifier reads `remote` in its link file.
+      if (req.url === '/relay' || req.url === '/dismiss') {
+        const ok = req.url === '/relay'
+          ? await bridge<boolean>('present', body) === true
+          : await bridge<boolean>('dismiss', String(body.group || '')) === true
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok }))
         return
@@ -419,6 +474,8 @@ function writeLink(): void {
       folders: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
       workspaceFile: vscode.workspace.workspaceFile?.scheme === 'file' ? vscode.workspace.workspaceFile.fsPath : undefined,
       appName: vscode.env.appName,
+      // The notifier hands such a window its system notifications, for the bridge.
+      remote: vscode.env.remoteName || undefined,
       focusedAt: vscode.window.state.focused ? Date.now() : 0,
     }, null, 2), { mode: 0o600 })
     chmodSync(LINK_FILE, 0o600) // mode only applies to a new file
@@ -549,32 +606,17 @@ async function chooseQuietTime(): Promise<void> {
 
 /* ------------------------------------------------------------------ setup */
 
-const helperBinary = () => join(helperPath(HOME), 'Contents', 'MacOS', 'notify')
-
-/** Runs the notifying app; resolves with its exit code and what it printed. */
-function runHelper(args: string[]): Promise<{ code: number | null; out: string }> {
-  return new Promise((resolve) => {
-    if (!existsSync(helperBinary())) return resolve({ code: null, out: 'not installed' })
-    const child = spawn(helperBinary(), args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let out = ''
-    child.stdout.on('data', (c) => { out += c })
-    child.stderr.on('data', (c) => { out += c })
-    child.on('close', (code) => resolve({ code, out: out.trim() }))
-    child.on('error', (err) => resolve({ code: null, out: String(err) }))
-  })
-}
-
 /**
  * What the setup page ticks off by itself: connected to Claude Code, allowed to notify,
  * and notifications that stay on screen.
  */
 async function refreshSetup(): Promise<void> {
   const connected = pluginInstalled(HOME) || hooksWired(HOME)
-  const status = process.platform === 'darwin' ? await runHelper(['-status']) : { code: 0, out: '' }
+  const status = await systemStatus()
   await vscode.commands.executeCommand('setContext', 'claudeNotify.connected', connected)
-  await vscode.commands.executeCommand('setContext', 'claudeNotify.allowed', status.code === 0)
-  await vscode.commands.executeCommand('setContext', 'claudeNotify.persistent', /^style: alert$/m.test(status.out))
-  await vscode.commands.executeCommand('setContext', 'claudeNotify.sharing', (await hiddenWhileSharing()) === false)
+  await vscode.commands.executeCommand('setContext', 'claudeNotify.allowed', status?.code === 0)
+  await vscode.commands.executeCommand('setContext', 'claudeNotify.persistent', /^style: alert$/m.test(status?.out || ''))
+  await vscode.commands.executeCommand('setContext', 'claudeNotify.sharing', status?.hiddenWhileSharing === false)
 }
 
 function openSetup(): Thenable<unknown> {
@@ -583,7 +625,9 @@ function openSetup(): Thenable<unknown> {
 
 /** The same question a first notification would ask, asked while the user is looking. */
 async function allowNotifications(): Promise<void> {
-  const { code, out } = await runHelper(['-authorize'])
+  const answered = remote() ? await bridge<HelperResult>('authorize') : await runHelper(HOME, ['-authorize'])
+  if (!answered) return // no bridge: offered already
+  const { code, out } = answered
   await refreshSetup()
   if (code === 0) {
     vscode.window.setStatusBarMessage('$(check) Notify for Claude Code may show notifications', 5000)
@@ -600,37 +644,21 @@ async function allowNotifications(): Promise<void> {
   if (answer === open) openNotificationSettings()
 }
 
-/**
- * macOS hides every notification while the screen is mirrored, shared or recorded, unless
- * "When mirroring or sharing the display" is on — in a call or a demo none would show.
- * Read through cfprefsd: the file on disk lags behind the switch. null when it cannot tell.
- */
-function hiddenWhileSharing(): Promise<boolean | null> {
-  if (process.platform !== 'darwin') return Promise.resolve(false)
-  return new Promise((resolve) => {
-    const child = spawn('/bin/sh', ['-c',
-      'defaults export com.apple.ncprefs - | plutil -extract dnd_prefs raw -o - - | base64 -D | plutil -convert json -o - -',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] })
-    let out = ''
-    child.stdout.on('data', (c) => { out += c })
-    child.on('close', () => {
-      try { resolve(JSON.parse(out).dndMirrored === true) } catch { resolve(null) }
-    })
-    child.on('error', () => resolve(null))
-  })
+/** System Settings on the user's computer: through the bridge when that is not this one. */
+function openSettingsPage(page: 'app' | 'sharing'): void {
+  if (remote()) void bridge('openSettings', page)
+  else openSystemSettings(page, log)
 }
 
 /** The switch is on the Notifications page itself, not on our app's. */
 function showWhileSharing(): void {
-  spawn('open', ['x-apple.systempreferences:com.apple.Notifications-Settings.extension'], { stdio: 'ignore' })
-    .on('error', (err) => log(`could not open System Settings: ${String(err)}`))
+  openSettingsPage('sharing')
   vscode.window.showInformationMessage('Notify for Claude Code: under "Allow notifications", turn on "When mirroring or sharing the display". Until then macOS hides every notification while your screen is shared or recorded.')
 }
 
 /** Straight to our app's page; a macOS that ignores the id opens the list. */
 function openNotificationSettings(): void {
-  spawn('open', [`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${HELPER_ID}`], { stdio: 'ignore' })
-    .on('error', (err) => log(`could not open System Settings: ${String(err)}`))
+  openSettingsPage('app')
 }
 
 /** The setup page once, on the first start; after that, only the reminder about hooks. */
@@ -642,6 +670,22 @@ async function firstRun(context: vscode.ExtensionContext): Promise<void> {
     return
   }
   await offerHooks(context)
+}
+
+/** The doctor's part for the computer in front of the user, when the notifier runs remotely. */
+async function bridgeReport(): Promise<string> {
+  const status = await bridge<NotifyStatus>('status')
+  if (!status) return `FAIL  the bridge extension (${BRIDGE_ID}) is not installed or not running here — system notifications cannot reach this computer`
+  const lines = [`ok    the bridge answers (${status.platform})`]
+  if (status.platform !== 'darwin') lines.push('      not macOS: the bridge shows notifications with notify-send or a Windows toast, as the notifier would')
+  else if (status.code === 0) {
+    lines.push('ok    Notify for Claude Code may show notifications')
+    if (/^style: banner$/m.test(status.out)) lines.push('      they slide away after a few seconds — for ones that stay, set System Settings → Notifications → Notify for Claude Code → Persistent')
+    if (status.hiddenWhileSharing) lines.push('      macOS hides them while the screen is shared or recorded — turn on "When mirroring or sharing the display"')
+  } else if (/^notDetermined$/m.test(status.out)) lines.push('warn  not allowed to notify yet — run "Notify for Claude Code: Allow notifications"')
+  else if (status.out === 'not installed') lines.push('FAIL  the notifying app is missing — reinstall the bridge')
+  else lines.push('FAIL  macOS denies notifications to Notify for Claude Code — turn them on in System Settings → Notifications')
+  return lines.join('\n')
 }
 
 function runNotifier(context: vscode.ExtensionContext, args: string[], cwd?: string): Promise<string> {
@@ -715,12 +759,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       goToSession(context, String(session || ''), String(root || ''))),
     vscode.commands.registerCommand('claudeNotify.test', async () => {
       // Run from this window's folder, so the notification is routed back to this window.
+      // In a remote window the folder is on this machine too: its scheme is vscode-remote.
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri
-      const cwd = folder?.scheme === 'file' && existsSync(folder.fsPath) ? folder.fsPath : undefined
+      const cwd = folder && existsSync(folder.fsPath) ? folder.fsPath : undefined
       const here = Boolean(cwd && linkInfo) && editorNotificationsOn()
       await runNotifier(context, ['--test'], cwd)
       const sent = `Notify for Claude Code: test notification sent — it should appear among the system notifications${here ? ' and in this window' : ''}.`
-      if (await hiddenWhileSharing()) {
+      if ((await systemStatus())?.hiddenWhileSharing) {
         const open = 'Open settings'
         const answer = await vscode.window.showWarningMessage(`${sent} While your screen is shared or recorded, macOS hides it — unless "When mirroring or sharing the display" is on.`, open)
         if (answer === open) showWhileSharing()
@@ -730,7 +775,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const report = await runNotifier(context, ['--doctor'])
       output?.clear()
       output?.appendLine(report.trimEnd())
+      if (remote()) output?.appendLine(`\nOn this computer:\n${await bridgeReport()}`)
       output?.show(true)
+    }),
+    // For the bridge: a click on a notification it showed lands here.
+    vscode.commands.registerCommand('claudeNotify.focusSession', async (session: string) => {
+      const ok = await focusSession(String(session || ''))
+      if (ok) {
+        markSeen(SESSIONS, String(session))
+        refreshStatusBar()
+      }
+      return ok
     }),
     vscode.commands.registerCommand('claudeNotify.toggle', async () => {
       const cfg = vscode.workspace.getConfiguration('claudeNotify')
