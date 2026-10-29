@@ -19,6 +19,8 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest # the notifying app is compiled with Swift
+    # The Marketplace identity trusts this environment, not a tag: a tag credential matches one tag.
+    environment: marketplace
     defaults:
       run:
         working-directory: extension
@@ -85,3 +87,23 @@ jobs:
           else
             echo "::warning title=Open VSX skipped::not published to Open VSX — set OPEN_VSX_TRUSTED or the OVSX_PAT secret (RELEASING.md)"
           fi
+      # The VS Code Marketplace takes no stored token either: a managed identity in Microsoft
+      # Entra ID trusts this workflow's environment, and is a Contributor of the publisher
+      # (RELEASING.md). Until that is set up, the packages go up by hand.
+      - name: Sign in to Microsoft Entra ID
+        if: vars.MARKETPLACE_ENTRA == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: VS Code Marketplace
+        env:
+          ENTRA: ${{ vars.MARKETPLACE_ENTRA }}
+        run: |
+          if [ "$ENTRA" != true ]; then
+            echo "::warning title=Marketplace skipped::not published to the VS Code Marketplace — upload the packages from the release by hand, or set up publishing (RELEASING.md)"
+            exit 0
+          fi
+          npx vsce publish --azure-credential --skip-duplicate --packagePath claude-session-notify-"$VERSION"-*.vsix
+          npx vsce publish --azure-credential --skip-duplicate --packagePath claude-session-notify-bridge-"$VERSION"-*.vsix

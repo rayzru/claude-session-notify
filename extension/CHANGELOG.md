@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- The extension page no longer repeats how to install it: the Marketplace and Open VSX pages
+  have their own button.
+- Releases reach the VS Code Marketplace from the release workflow, signed in through
+  Microsoft Entra ID, with no stored token.
+
 ## 0.3.1
 
 - A shorter extension page: what you get, with every picture, how it works in a few lines,
