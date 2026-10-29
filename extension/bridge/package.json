@@ -2,7 +2,7 @@
   "name": "claude-session-notify-bridge",
   "displayName": "Notify for Claude Code — Bridge",
   "description": "System notifications from Notify for Claude Code when Claude Code runs on a remote machine — over SSH, in WSL or a container — shown on the computer in front of you.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "rayz",
   "license": "MIT",
   "icon": "media/icon.png",

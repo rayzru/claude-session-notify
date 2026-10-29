@@ -34,11 +34,7 @@ window that holds the session and asks the Claude Code extension there to open i
 
 Everything stays on your computer. No telemetry.
 
-## Install
-
-Search for **Notify for Claude Code** in the Extensions view, or run
-`code --install-extension rayz.claude-session-notify`. Also on
-[Open VSX](https://open-vsx.org/extension/rayz/claude-session-notify).
+## Setup
 
 Needs macOS 13 or later and the official Claude Code extension. Nothing else: no Node.js, no
 Homebrew.
