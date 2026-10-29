@@ -1,41 +1,24 @@
-# claude-notify
+# claude-session-notify
 
-A Claude Code plugin that tells you when a session **finished** and when one is **waiting
-for you**, so you can run several sessions at once without babysitting any of them.
-Clicking the notification brings that session's tab to the front.
+Notifications for Claude Code sessions: when a session finishes or needs you, a click opens it.
+This repository holds two things that share one notifier script:
+
+- **[Notify for Claude Code](extension/README.md)**, the VS Code extension — what most people
+  want. Nothing else to install; works in local and remote (SSH, Dev Container) windows.
+- **`claude-notify`**, a Claude Code plugin with the same notifications, for setups without
+  the extension. Described below.
 
 ![macOS notifications: one session done, another waiting for permission](extension/media/readme/notification.png)
 
-**Using VS Code?** The extension [Notify for Claude Code](extension/README.md) does all of
-this with nothing else to install, and adds the same notification inside VS Code and every
-session at a glance in the status bar.
+Tested on macOS with VS Code and the official Claude Code extension. The script also builds
+Windows toasts and Linux `notify-send` notifications, but those paths have only dry-run tests.
 
-## Why
-
-Claude Code does not signal a session you are not looking at. The VS Code extension puts a
-badge on the session list, but only while that window is in front of you, and a session in
-a terminal shows nothing at all. Run three sessions in parallel and you end up polling them
-by hand.
-
-## Scope
-
-This targets **VS Code with the official Anthropic extension, on macOS**. That is the path
-that is used daily and tested.
-
-The code also builds commands for Windows toasts and for `notify-send` on Linux, and
-`uriScheme` / `extensionId` can be pointed at a VS Code fork. Those paths are covered by
-dry-run tests only — nobody has run them. Treat them as a starting point, not a promise.
-Testing and shipping them is planned — see [Plans](extension/README.md#plans).
-
-## Install
+## Install the plugin
 
 ```
 /plugin marketplace add rayzru/claude-session-notify
 /plugin install claude-notify@rayzru
 ```
-
-The marketplace is named after its owner, so the plugin reads `claude-notify@rayzru`. If
-more plugins follow, they can be listed from the same marketplace manifest.
 
 Hooks are read when a session starts, so open a new session. Then:
 
@@ -43,29 +26,16 @@ Hooks are read when a session starts, so open a new session. Then:
 /claude-notify:doctor
 ```
 
-It checks everything below and names whatever is broken. Run it first whenever something
-does not work — it is faster than guessing.
+It names whatever is broken.
 
 ### Requirements
 
 - **Node 18 or newer** — the plugin's hooks run with it.
-- **Something to show the notifications**, one of:
-  - **The VS Code extension *Notify for Claude Code*** — recommended. The plugin then shows
-    notifications through the extension's own small app, under its own name and icon, and
-    there is nothing else to install. The extension also adds the same notification inside
-    VS Code, every session in the status bar, and a setup page that walks through the rest.
-    It needs no Node.js itself; used without this plugin, it adds hooks of its own.
-  - **[`terminal-notifier`](https://github.com/julienXX/terminal-notifier)**
-    (`brew install terminal-notifier`). macOS will not show its notifications until it has
-    been granted permission, and it never asks when it is first run from a script. Launch it
-    once by hand and answer the prompt:
-
-    ```sh
-    open -a "$(brew --prefix terminal-notifier)/terminal-notifier.app" --args -message hi
-    ```
-
-  Without either, notifications still appear through `osascript`, but they cannot be
-  clicked. `/claude-notify:doctor` says which one is in use and what is missing.
+- **Something to show the notifications**: the VS Code extension's own app (install the
+  extension), or [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
+  (`brew install terminal-notifier`; launch it once by hand so macOS asks for permission:
+  `open -a "$(brew --prefix terminal-notifier)/terminal-notifier.app" --args -message hi`).
+  Without either, notifications come through `osascript` and cannot be clicked.
 
 ## What you get
 
@@ -75,29 +45,19 @@ does not work — it is faster than guessing.
 | Session stopped with an error | *Stopped with an error* |
 | Session wants a permission or an answer | the actual request text |
 
-Three behaviours keep it from becoming noise:
-
-- **A short turn stays quiet.** Under `minTurnSeconds` (45 by default) nothing fires — you
-  were watching that answer arrive. Set it to `0` to always notify.
-- **One live notification per session.** A newer one replaces the older, so the list holds
-  the current state of each session rather than a pile of history.
-- **Subagents stay silent.** Only the main agent reports.
+Turns shorter than `minTurnSeconds` (45 by default) stay quiet, a newer notification for a
+session replaces the older one, and subagents stay silent.
 
 ## Clicking a notification
 
 The click opens `vscode://<extensionId>/open?session=<id>`, which reveals that session's
 existing tab instead of opening a second one.
 
-Three caveats, each of which has cost someone an afternoon:
-
-- **VS Code asks once, before the link ever reaches the extension.** Until you answer that
-  prompt, clicking only raises the VS Code window showing whatever tab was last active —
-  which is indistinguishable from a link pointing at the wrong session. Answer it once and
-  VS Code remembers; `doctor` reads that list and tells you where you stand.
-- **That URL is read out of the extension bundle** and is not part of any documented API.
-  If a future release changes it, clicks stop working; notifications keep working.
-- **A session started in a plain terminal has no tab to reveal**, so `click: "auto"` leaves
-  the link off. The notification still fires.
+- **VS Code asks once** before the link reaches the extension. Until you answer, a click only
+  raises the window. `doctor` tells you whether it has been answered.
+- **The URL is not a documented API.** If the Claude Code extension changes it, clicks stop
+  working; notifications keep working.
+- **A session in a plain terminal** has no tab, so the notification has no click.
 
 ## Configuration
 
@@ -149,36 +109,13 @@ hooks/claude-notify.mjs --resume        # notifications back on
 hooks/claude-notify.mjs --help
 ```
 
-## Running alongside other tools
-
-The plugin needs nothing but Node and, for clicks, `terminal-notifier`. It does not read or
-write any other tool's state.
-
-Several session managers hook the same four events for their own purposes, which is fine —
-they do different work. It only becomes a problem when another tool also shows desktop
-notifications, and then you get two for every event. `doctor` lists what else is wired to
-those events so you can tell at a glance.
-
-One conflict is worth calling out because it is easy to create by accident: if the script is
-*also* wired by hand in `settings.json`, every notification fires twice. `doctor` fails
-loudly on that.
-
 ## How it works
 
-Four hooks, one script, no dependencies.
-
-`UserPromptSubmit` writes a timestamp for the session. `Stop` and `StopFailure` read it back
-to measure the turn, and stay quiet if it was short. `Notification` fires whenever Claude
-wants a permission or an answer.
-
-A notification that waits for a reply needs a process to wait in, so the hook spawns a
-detached presenter and returns immediately — a hook must never hold up the session it
-reports on. The presenter holds the notification, and on a click opens the session URL.
-
-When a newer notification replaces an older one for the same session, the old presenter is
-killed **and its delivered notification is removed**. Skipping that second part leaves a
-notification on screen whose owner is gone, and clicking it makes macOS try to relaunch the
-bundle: `-609`, or *"the application is not open anymore"*.
+Four hooks, one script, no dependencies. `UserPromptSubmit` notes when a turn starts; `Stop`
+and `StopFailure` measure it and stay quiet if it was short; `Notification` fires when Claude
+wants a permission or an answer. The hook hands the notification to a detached process and
+returns at once, so it never holds up the session. A newer notification for a session replaces
+the older one.
 
 ## Support the project
 
