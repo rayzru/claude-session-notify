@@ -42,6 +42,13 @@ says in its own record of running processes (`~/.claude/sessions/`). For a sessi
 nothing about, the transcript decides: a working session keeps adding dated records to it. Title,
 model and context size come from the end of the transcript when the list opens.
 
+## Sounds
+
+The notifying app carries its own sounds (`extension/native/macos/sounds/`, made by
+`make-sounds.py`), so they do not depend on what a macOS version ships. A sound it cannot find
+falls back to the system's default. terminal-notifier and `osascript`, used when the app is not
+installed, play the system's sounds by name.
+
 ## Remote windows
 
 Over Remote-SSH or in a Dev Container, Claude Code runs on the remote machine, so its hooks, the

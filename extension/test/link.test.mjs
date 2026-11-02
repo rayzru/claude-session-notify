@@ -190,6 +190,9 @@ const withHelper = await dryShow({ ...done, sound: true }, { HOME: home2, CLAUDE
 assert.equal(withHelper.cmd, helper)
 ok('the extension\'s own app shows the notification when it is installed')
 
+assert.equal(withHelper.args[withHelper.args.indexOf('-sound') + 1], 'done.wav')
+ok('and plays the sound it carries, not a file of the system')
+
 const viaRunner = JSON.parse(await show({ hook_event_name: 'Stop', session_id: D, cwd: '/work/iss', transcript_path: t2 }))
 assert.match(viaRunner.focusCommand, new RegExp(`^'${join(kept, 'claude-notify')}' '--focus' '${D}'`))
 ok('and a click runs the runner, which needs no node on PATH')

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Notifications have sounds of their own. The notifying app played sounds from the system by
+  name, and a sound macOS no longer had played nothing, with no error anywhere. It now carries
+  its own, and a sound it cannot find falls back to the system's default.
+
 ## 0.3.2
 
 - The extension page no longer repeats how to install it: the Marketplace and Open VSX pages
