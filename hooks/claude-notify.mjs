@@ -67,6 +67,9 @@ const SESSION_TTL_MS = 3 * 3600_000
 const PAUSE_PATH = join(homedir(), '.claude', 'claude-notify', 'pause.json')
 const CONFIG_PATH = process.env.CLAUDE_NOTIFY_CONFIG || join(homedir(), '.claude', 'claude-notify.config.json')
 const RESOLVED_WITHOUT_CLICK = new Set(['@TIMEOUT', '@CLOSED', ''])
+// The notifying app plays its own, which no macOS update can take away; the system's are
+// for terminal-notifier and osascript, which carry none.
+const HELPER_SOUNDS = { done: 'done.wav', waiting: 'waiting.wav', error: 'error.wav' }
 const MAC_SOUNDS = { done: 'Glass', waiting: 'Ping', error: 'Basso' }
 const WINDOWS_APP_ID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
 
@@ -494,7 +497,7 @@ function buildPlan(o) {
     if (notifier) {
       const args = ['-title', o.title, '-message', o.message]
       if (o.subtitle) args.push('-subtitle', o.subtitle)
-      if (o.sound) args.push('-sound', MAC_SOUNDS[o.soundKey] || 'default')
+      if (o.sound) args.push('-sound', (notifier === HELPER ? HELPER_SOUNDS : MAC_SOUNDS)[o.soundKey] || 'default')
       if (o.group) args.push('-group', o.group)
       // The click command travels inside the notification itself, and nothing waits for
       // an answer. The earlier design kept one waiting terminal-notifier per notification;

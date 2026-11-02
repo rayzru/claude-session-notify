@@ -28,6 +28,7 @@ lipo -create -output "$app/Contents/MacOS/notify" "$work/notify-arm64" "$work/no
 sed "s/__VERSION__/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 cp "$here/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+cp "$here"/sounds/*.wav "$app/Contents/Resources/"
 
 # arm64 code must be signed. The identifier must equal CFBundleIdentifier: permission to
 # notify is granted to that identity.

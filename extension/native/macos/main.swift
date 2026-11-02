@@ -153,6 +153,12 @@ final class Helper: NSObject, NSApplicationDelegate, UNUserNotificationCenterDel
     }
   }
 
+  /// A name the app does not carry would play nothing at all, and say nothing about it.
+  func notificationSound(_ name: String) -> UNNotificationSound {
+    guard name != "default", Bundle.main.url(forResource: name, withExtension: nil) != nil else { return .default }
+    return UNNotificationSound(named: UNNotificationSoundName(name))
+  }
+
   func post(_ message: String) {
     whenAllowed {
       let content = UNMutableNotificationContent()
@@ -160,7 +166,7 @@ final class Helper: NSObject, NSApplicationDelegate, UNUserNotificationCenterDel
       if let subtitle = self.args["-subtitle"] { content.subtitle = subtitle }
       content.body = message
       if let sound = self.args["-sound"] {
-        content.sound = sound == "default" ? .default : UNNotificationSound(named: UNNotificationSoundName(sound))
+        content.sound = self.notificationSound(sound)
       }
       var info: [String: String] = [:]
       if let command = self.args["-execute"] { info["execute"] = command }

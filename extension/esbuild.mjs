@@ -1,6 +1,6 @@
 import { build, context } from 'esbuild'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 
 const watch = process.argv.includes('--watch')
 const options = {
@@ -35,7 +35,8 @@ function buildHelper() {
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version
   const out = 'dist/notify-helper'
   const binary = `${out}/Contents/MacOS/notify`
-  const sources = ['native/macos/main.swift', 'native/macos/Info.plist', 'native/macos/AppIcon.icns', 'native/macos/build.sh']
+  const sounds = readdirSync('native/macos/sounds').map((file) => `native/macos/sounds/${file}`)
+  const sources = ['native/macos/main.swift', 'native/macos/Info.plist', 'native/macos/AppIcon.icns', 'native/macos/build.sh', ...sounds]
   const fresh = existsSync(binary)
     && readFileSync(`${out}/Contents/Info.plist`, 'utf8').includes(`<string>${version}</string>`)
     && sources.every((file) => statSync(file).mtimeMs <= statSync(binary).mtimeMs)
