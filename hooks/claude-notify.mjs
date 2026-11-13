@@ -70,9 +70,9 @@ const RESOLVED_WITHOUT_CLICK = new Set(['@TIMEOUT', '@CLOSED', ''])
 // The notifying app plays macOS's own sounds, which the extension copies into it from this
 // Mac when it installs it, and its own lookalikes where that copy is missing. Apple's files
 // never ship with the app. terminal-notifier and osascript play the system's by name.
-const HELPER_SYSTEM_SOUNDS = { done: 'Glass.aiff', waiting: 'Ping.aiff', error: 'Basso.aiff' }
-const HELPER_SOUNDS = { done: 'done.wav', waiting: 'waiting.wav', error: 'error.wav' }
+// The extension copies exactly these (extension/src/wiring.ts, SYSTEM_SOUNDS).
 const MAC_SOUNDS = { done: 'Glass', waiting: 'Ping', error: 'Basso' }
+const HELPER_SOUNDS = { done: 'done.wav', waiting: 'waiting.wav', error: 'error.wav' }
 const WINDOWS_APP_ID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 const DEFAULTS = {
@@ -492,7 +492,7 @@ function windowsToastXml(o) {
 
 /** The sound the notifying app plays: the system's copy in its bundle, else its own. */
 function helperSound(key) {
-  const system = HELPER_SYSTEM_SOUNDS[key]
+  const system = MAC_SOUNDS[key] && `${MAC_SOUNDS[key]}.aiff`
   if (system && existsSync(join(dirname(dirname(HELPER)), 'Resources', system))) return system
   return HELPER_SOUNDS[key]
 }

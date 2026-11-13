@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { cpSync, mkdtempSync, mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -209,6 +209,51 @@ test('a macOS update that adds a system sound installs the app again', () => {
   writeFileSync(join(mac.soundsDir, 'Ping.aiff'), 'ping')
   assert.equal(w.installHelper(bundled, h, mac.deps), true)
   assert.ok(resources(h).includes('Ping.aiff'))
+})
+
+test('an app another version put in is replaced, though the stamp matches this one', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  // 0.3.3 in the other extension (or the bridge) copies its own app over this one
+  rmSync(w.helperPath(h), { recursive: true })
+  cpSync(bundle(fresh(), 'v0'), w.helperPath(h), { recursive: true })
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  assert.equal(readFileSync(helperBinary(w.helperPath(h)), 'utf8'), 'v1')
+  assert.ok(resources(h).includes('Glass.aiff'))
+})
+
+test('a macOS update that changes a system sound installs the app again', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  writeFileSync(join(mac.soundsDir, 'Glass.aiff'), 'a new glass')
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  assert.equal(readFileSync(join(w.helperPath(h), 'Contents', 'Resources', 'Glass.aiff'), 'utf8'), 'a new glass')
+})
+
+test('an install cut short is cleaned up later; one at work is left alone', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const dir = dirname(w.helperPath(h))
+  mkdirSync(join(dir, '.helper-staging-1-1', 'Contents'), { recursive: true })
+  mkdirSync(join(dir, '.helper-staging-2-2'), { recursive: true })
+  const old = (Date.now() - 3600_000) / 1000
+  utimesSync(join(dir, '.helper-staging-1-1'), old, old)
+  w.installHelper(bundle(h), h, mac.deps)
+  assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('.helper-staging')), ['.helper-staging-2-2'])
+})
+
+test('re-signs with the identifier the bundle names', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  writeFileSync(join(bundled, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleIdentifier</key>\n  <string>com.example.other</string></dict></plist>')
+  w.installHelper(bundled, h, mac.deps)
+  const sign = mac.calls.find((c) => c[0] === 'codesign' && c[1] === '--force')
+  assert.equal(sign[sign.indexOf('--identifier') + 1], 'com.example.other')
 })
 
 test('lsregister registers the installed app where it exists', () => {
