@@ -44,8 +44,16 @@ model and context size come from the end of the transcript when the list opens.
 
 ## Sounds
 
-The notifying app carries its own sounds (`extension/native/macos/sounds/`, made by
-`make-sounds.py`), so they do not depend on what a macOS version ships. A sound it cannot find
+A finished session plays Glass, a session waiting for you Ping, and a failure Basso: macOS's own
+sounds. A notification can only play a sound from inside the app that posts it, and Apple's files
+are not shipped with the extension, so when the extension installs the app in
+`~/.claude/claude-notify/` it copies the three from `/System/Library/Sounds` on your Mac into it
+and signs the copy again (ad hoc, as the build does): a file added to an app breaks its signature.
+`~/.claude/claude-notify/helper.stamp` records which app and sounds went in; the app is installed
+again only when either changes.
+
+Where that copy cannot be made, the app plays the lookalikes it carries
+(`extension/native/macos/sounds/`, made by `make-sounds.py`), and a sound it cannot find at all
 falls back to the system's default. terminal-notifier and `osascript`, used when the app is not
 installed, play the system's sounds by name.
 

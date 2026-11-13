@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { cpSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import * as w from './.build/wiring.mjs'
 
 const fresh = () => mkdtempSync(join(tmpdir(), 'cn-home-'))
@@ -81,21 +81,143 @@ test('the runner starts the notifier with the editor runtime, and falls back to 
   assert.equal(spawnSync(w.runnerPath(h), ['--doctor'], { encoding: 'utf8' }).stdout.trim(), 'node --doctor')
 })
 
-test('the notifying app is copied only when it changed, and not at all where it was not built', () => {
-  const h = fresh()
+/** A Mac on Linux: a sounds folder and a codesign that only records its calls. */
+const fakeMac = (h, { sign = 0, verify = 0, sounds = ['Glass.aiff', 'Ping.aiff', 'Basso.aiff'] } = {}) => {
+  const soundsDir = join(h, 'System-Sounds')
+  mkdirSync(soundsDir, { recursive: true })
+  for (const name of sounds) writeFileSync(join(soundsDir, name), `sound ${name}`)
+  const calls = []
+  const run = (cmd, args) => {
+    calls.push([cmd, ...args])
+    if (cmd !== 'codesign') return { status: 0 }
+    return { status: args[0] === '--verify' ? verify : sign }
+  }
+  return { soundsDir, calls, deps: { run, soundsDir, codesign: 'codesign', lsregister: join(h, 'no-lsregister') } }
+}
+const helperBinary = (root) => join(root, 'Contents', 'MacOS', 'notify')
+const bundle = (h, body = 'v1') => {
   const bundled = join(h, 'notify-helper')
-  const binary = (root) => join(root, 'Contents', 'MacOS', 'notify')
-  assert.equal(w.installHelper(bundled, h), false)
   mkdirSync(join(bundled, 'Contents', 'MacOS'), { recursive: true })
-  writeFileSync(binary(bundled), 'v1')
+  mkdirSync(join(bundled, 'Contents', 'Resources'), { recursive: true })
+  writeFileSync(helperBinary(bundled), body)
   writeFileSync(join(bundled, 'Contents', 'Info.plist'), '<plist/>')
-  assert.equal(w.installHelper(bundled, h), true)
-  assert.equal(readFileSync(binary(w.helperPath(h)), 'utf8'), 'v1')
+  writeFileSync(join(bundled, 'Contents', 'Resources', 'done.wav'), 'wav')
+  return bundled
+}
+const stamp = (h) => JSON.parse(readFileSync(w.helperStampPath(h), 'utf8'))
+const resources = (h) => readdirSync(join(w.helperPath(h), 'Contents', 'Resources')).sort()
+
+test('the notifying app is not installed where it was not built', () => {
+  const h = fresh()
+  assert.equal(w.installHelper(join(h, 'notify-helper'), h, fakeMac(h).deps), false)
+  assert.equal(existsSync(w.helperStampPath(h)), false)
+})
+
+test('installs the app with the system sounds, re-signed, and writes a stamp', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
   assert.ok(w.helperPath(h).endsWith('.app'))
-  assert.equal(w.installHelper(bundled, h), false)
-  writeFileSync(binary(bundled), 'v2')
-  assert.equal(w.installHelper(bundled, h), true)
-  assert.equal(readFileSync(binary(w.helperPath(h)), 'utf8'), 'v2')
+  assert.equal(readFileSync(helperBinary(w.helperPath(h)), 'utf8'), 'v1')
+  assert.deepEqual(resources(h), ['Basso.aiff', 'Glass.aiff', 'Ping.aiff', 'done.wav'])
+  assert.equal(readFileSync(join(w.helperPath(h), 'Contents', 'Resources', 'Glass.aiff'), 'utf8'), 'sound Glass.aiff')
+  const signs = mac.calls.filter((c) => c[0] === 'codesign')
+  assert.deepEqual(signs[0].slice(1, 6), ['--force', '--sign', '-', '--identifier', 'ru.rayz.notify-for-claude-code'])
+  assert.deepEqual(signs[1].slice(1, 3), ['--verify', '--strict'])
+  for (const c of signs) assert.ok(!c[c.length - 1].endsWith('.app'), 'the staging folder is not named .app')
+  assert.deepEqual(stamp(h).added, ['Glass.aiff', 'Ping.aiff', 'Basso.aiff'])
+  assert.equal(stamp(h).fallback, undefined)
+  assert.deepEqual(readdirSync(dirname(w.helperPath(h))).filter((n) => n.startsWith('.helper-staging')), [])
+  // the bundled app itself is left as it was
+  assert.deepEqual(readdirSync(join(bundled, 'Contents', 'Resources')), ['done.wav'])
+})
+
+test('a second start with the same bundle writes nothing; a changed one reinstalls', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  const before = readFileSync(w.helperStampPath(h), 'utf8')
+  mac.calls.length = 0
+  assert.equal(w.installHelper(bundled, h, mac.deps), false)
+  assert.equal(mac.calls.length, 0)
+  assert.equal(readFileSync(w.helperStampPath(h), 'utf8'), before)
+  writeFileSync(helperBinary(bundled), 'v2')
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  assert.equal(readFileSync(helperBinary(w.helperPath(h)), 'utf8'), 'v2')
+  assert.notEqual(readFileSync(w.helperStampPath(h), 'utf8'), before)
+})
+
+test('an app from before the stamp, or a removed one, is installed again', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  // what 0.3.3 left: the same app, no stamp
+  mkdirSync(dirname(w.helperPath(h)), { recursive: true })
+  cpSync(bundled, w.helperPath(h), { recursive: true })
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  assert.ok(resources(h).includes('Glass.aiff'))
+  rmSync(w.helperPath(h), { recursive: true })
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+})
+
+test('a failed re-sign installs the unmodified app, and is not retried on every start', () => {
+  for (const failure of [{ sign: 1 }, { verify: 1 }]) {
+    const h = fresh()
+    const mac = fakeMac(h, failure)
+    const bundled = bundle(h)
+    assert.equal(w.installHelper(bundled, h, mac.deps), true)
+    assert.deepEqual(resources(h), ['done.wav'])
+    assert.deepEqual(stamp(h).added, [])
+    assert.ok(stamp(h).fallback)
+    assert.equal(w.installHelper(bundled, h, mac.deps), false)
+    // a new release tries again, and a success replaces the fallback
+    writeFileSync(helperBinary(bundled), 'v2')
+    assert.equal(w.installHelper(bundled, h, { ...mac.deps, run: fakeMac(h).deps.run }), true)
+    assert.ok(resources(h).includes('Glass.aiff'))
+    assert.equal(stamp(h).fallback, undefined)
+  }
+})
+
+test('a missing codesign also falls back to the unmodified app', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const bundled = bundle(h)
+  const run = (cmd) => cmd === 'codesign' ? { status: null, error: new Error('ENOENT') } : { status: 0 }
+  assert.equal(w.installHelper(bundled, h, { ...mac.deps, run }), true)
+  assert.deepEqual(resources(h), ['done.wav'])
+})
+
+test('copies only the system sounds that exist; with none, signs nothing', () => {
+  const h = fresh()
+  const mac = fakeMac(h, { sounds: ['Glass.aiff'] })
+  assert.equal(w.installHelper(bundle(h), h, mac.deps), true)
+  assert.deepEqual(resources(h), ['Glass.aiff', 'done.wav'])
+  const h2 = fresh()
+  const none = fakeMac(h2, { sounds: [] })
+  assert.equal(w.installHelper(bundle(h2), h2, none.deps), true)
+  assert.deepEqual(resources(h2), ['done.wav'])
+  assert.equal(none.calls.filter((c) => c[0] === 'codesign').length, 0)
+})
+
+test('a macOS update that adds a system sound installs the app again', () => {
+  const h = fresh()
+  const mac = fakeMac(h, { sounds: ['Glass.aiff'] })
+  const bundled = bundle(h)
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  writeFileSync(join(mac.soundsDir, 'Ping.aiff'), 'ping')
+  assert.equal(w.installHelper(bundled, h, mac.deps), true)
+  assert.ok(resources(h).includes('Ping.aiff'))
+})
+
+test('lsregister registers the installed app where it exists', () => {
+  const h = fresh()
+  const mac = fakeMac(h)
+  const lsregister = join(h, 'lsregister')
+  writeFileSync(lsregister, '')
+  w.installHelper(bundle(h), h, { ...mac.deps, lsregister })
+  assert.deepEqual(mac.calls.at(-1), [lsregister, '-f', w.helperPath(h)])
 })
 
 test('refuses to rewrite an unreadable settings.json', () => {

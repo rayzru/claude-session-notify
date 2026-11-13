@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -190,8 +190,23 @@ const withHelper = await dryShow({ ...done, sound: true }, { HOME: home2, CLAUDE
 assert.equal(withHelper.cmd, helper)
 ok('the extension\'s own app shows the notification when it is installed')
 
-assert.equal(withHelper.args[withHelper.args.indexOf('-sound') + 1], 'done.wav')
-ok('and plays the sound it carries, not a file of the system')
+const soundOf = async (soundKey) => {
+  const p = await dryShow({ ...done, sound: true, soundKey }, { HOME: home2, CLAUDE_NOTIFY_PLATFORM: 'darwin' })
+  return p.args[p.args.indexOf('-sound') + 1]
+}
+assert.equal(await soundOf('done'), 'done.wav')
+assert.equal(await soundOf('waiting'), 'waiting.wav')
+assert.equal(await soundOf('error'), 'error.wav')
+ok('without the system sounds in the app, it plays the ones it carries')
+
+const resources = join(kept, 'Notify for Claude Code.app', 'Contents', 'Resources')
+mkdirSync(resources, { recursive: true })
+for (const name of ['Glass.aiff', 'Ping.aiff', 'Basso.aiff']) writeFileSync(join(resources, name), '')
+assert.equal(await soundOf('done'), 'Glass.aiff')
+assert.equal(await soundOf('waiting'), 'Ping.aiff')
+assert.equal(await soundOf('error'), 'Basso.aiff')
+ok('with the system sounds copied into the app, it plays Glass, Ping and Basso')
+for (const name of ['Glass.aiff', 'Ping.aiff', 'Basso.aiff']) rmSync(join(resources, name))
 
 const viaRunner = JSON.parse(await show({ hook_event_name: 'Stop', session_id: D, cwd: '/work/iss', transcript_path: t2 }))
 assert.match(viaRunner.focusCommand, new RegExp(`^'${join(kept, 'claude-notify')}' '--focus' '${D}'`))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4
+
+- Notifications play macOS's own Glass, Ping and Basso again. 0.3.3 replaced them with
+  lookalikes the app carries, because the app could not reach the system's sounds by name.
+  The extension now copies them from your Mac into the app when it installs it; Apple's
+  files are not shipped. Where the copy cannot be made, the lookalikes play as before.
+
 ## 0.3.3
 
 - Notifications have sounds of their own. The notifying app played sounds from the system by

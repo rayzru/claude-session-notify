@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -103,22 +104,101 @@ export function writeRunner(home: string, runtime: string): boolean {
   return true
 }
 
+/** What the last install of the notifying app did; kept outside the bundle, see installHelper. */
+export const helperStampPath = (home: string) => join(claudeDir(home), 'claude-notify', 'helper.stamp')
 /**
- * Copies the notifying app to its fixed place when the bundled one differs, and registers
- * it with LaunchServices, which is how macOS finds it again to deliver a click. Comparing
- * the executable is enough: its signature covers the rest of the bundle. Returns true if
- * it wrote.
+ * macOS's own sounds, copied into the installed app from the Mac it runs on: Apple's files
+ * never enter the repository or a package. The notifier asks for them by these names.
  */
-export function installHelper(bundled: string, home: string): boolean {
+export const SYSTEM_SOUNDS = ['Glass.aiff', 'Ping.aiff', 'Basso.aiff'] as const
+const HELPER_ID = 'ru.rayz.notify-for-claude-code' // as in native/macos/build.sh
+
+export interface HelperDeps {
+  /** Runs a command; only its exit status counts. */
+  run?: (cmd: string, args: string[]) => { status: number | null, error?: Error }
+  soundsDir?: string
+  codesign?: string
+  lsregister?: string
+}
+
+const defaultRun = (cmd: string, args: string[]) => spawnSync(cmd, args, { stdio: 'ignore' })
+
+/**
+ * Copies the notifying app to its fixed place when the bundled one changed, adds macOS's own
+ * sounds to it and registers it with LaunchServices, which is how macOS finds it again to
+ * deliver a click. Returns true if it wrote.
+ *
+ * Adding files breaks the bundle's seal, so the copy is re-signed ad hoc, as build.sh signs
+ * it. When that fails, the unmodified app goes in and plays the sounds it carries; a bundle
+ * with a broken seal is never installed. Re-signing rewrites the signature inside the
+ * executable, so the installed one can no longer be compared with the bundled one: a stamp
+ * next to the app records the bundled executable's hash and the system sounds found. The app
+ * is installed again when it is missing or either of them changed — not after a failed
+ * re-sign alone, which would otherwise repeat on every start.
+ */
+export function installHelper(bundled: string, home: string, deps: HelperDeps = {}): boolean {
+  const run = deps.run ?? defaultRun
+  const soundsDir = deps.soundsDir ?? '/System/Library/Sounds'
+  const codesign = deps.codesign ?? '/usr/bin/codesign'
+  const lsregister = deps.lsregister ?? LSREGISTER
   const target = helperPath(home)
   const binary = (root: string) => join(root, 'Contents', 'MacOS', 'notify')
   if (!existsSync(binary(bundled))) return false // built without it: not on macOS
-  if (existsSync(binary(target)) && readFileSync(binary(target)).equals(readFileSync(binary(bundled)))) return false
-  rmSync(target, { recursive: true, force: true })
-  mkdirSync(dirname(target), { recursive: true })
-  cpSync(bundled, target, { recursive: true })
-  chmodSync(binary(target), 0o755)
-  if (existsSync(LSREGISTER)) spawnSync(LSREGISTER, ['-f', target], { stdio: 'ignore' })
+
+  const hash = createHash('sha256').update(readFileSync(binary(bundled))).digest('hex')
+  const sounds = SYSTEM_SOUNDS.filter((name) => existsSync(join(soundsDir, name)))
+  const stampPath = helperStampPath(home)
+  const stamp = readJson(stampPath)
+  if (existsSync(binary(target)) && stamp?.binary === hash
+    && JSON.stringify(stamp.sounds) === JSON.stringify(sounds)) return false
+
+  const dir = dirname(target)
+  mkdirSync(dir, { recursive: true })
+  // Not named .app: LaunchServices registers any .app it comes across (see build.sh).
+  const staging = join(dir, `.helper-staging-${process.pid}-${Date.now()}`)
+  const stage = () => {
+    rmSync(staging, { recursive: true, force: true })
+    cpSync(bundled, staging, { recursive: true })
+    chmodSync(binary(staging), 0o755)
+  }
+  const ok = (args: string[]) => {
+    try {
+      const r = run(codesign, args)
+      return !r.error && r.status === 0
+    } catch { return false }
+  }
+  let added: string[] = []
+  let fallback: string | undefined
+  try {
+    stage()
+    if (sounds.length) {
+      const resources = join(staging, 'Contents', 'Resources')
+      mkdirSync(resources, { recursive: true })
+      // Read and written, not copied: a copy would carry extended attributes, which a
+      // strict signature refuses.
+      for (const name of sounds) writeFileSync(join(resources, name), readFileSync(join(soundsDir, name)))
+      if (ok(['--force', '--sign', '-', '--identifier', HELPER_ID, staging]) && ok(['--verify', '--strict', staging])) {
+        added = [...sounds]
+      } else {
+        fallback = 'the copy with the system sounds could not be signed'
+        stage()
+      }
+    } else {
+      fallback = 'no system sounds found'
+    }
+    rmSync(target, { recursive: true, force: true })
+    try {
+      renameSync(staging, target)
+    } catch {
+      // Another window installing at the same moment: the last one in wins.
+      rmSync(target, { recursive: true, force: true })
+      renameSync(staging, target)
+    }
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+  writeFileSync(stampPath, JSON.stringify({ binary: hash, sounds, added, ...(fallback ? { fallback } : {}) }) + '\n')
+  if (existsSync(lsregister)) run(lsregister, ['-f', target])
   return true
 }
 
