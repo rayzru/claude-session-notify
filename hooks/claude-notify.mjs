@@ -67,10 +67,12 @@ const SESSION_TTL_MS = 3 * 3600_000
 const PAUSE_PATH = join(homedir(), '.claude', 'claude-notify', 'pause.json')
 const CONFIG_PATH = process.env.CLAUDE_NOTIFY_CONFIG || join(homedir(), '.claude', 'claude-notify.config.json')
 const RESOLVED_WITHOUT_CLICK = new Set(['@TIMEOUT', '@CLOSED', ''])
-// The notifying app plays its own, which no macOS update can take away; the system's are
-// for terminal-notifier and osascript, which carry none.
-const HELPER_SOUNDS = { done: 'done.wav', waiting: 'waiting.wav', error: 'error.wav' }
+// The notifying app plays macOS's own sounds, which the extension copies into it from this
+// Mac when it installs it, and its own lookalikes where that copy is missing. Apple's files
+// never ship with the app. terminal-notifier and osascript play the system's by name.
+// The extension copies exactly these (extension/src/wiring.ts, SYSTEM_SOUNDS).
 const MAC_SOUNDS = { done: 'Glass', waiting: 'Ping', error: 'Basso' }
+const HELPER_SOUNDS = { done: 'done.wav', waiting: 'waiting.wav', error: 'error.wav' }
 const WINDOWS_APP_ID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 const DEFAULTS = {
@@ -488,6 +490,13 @@ function windowsToastXml(o) {
   ].join('')
 }
 
+/** The sound the notifying app plays: the system's copy in its bundle, else its own. */
+function helperSound(key) {
+  const system = MAC_SOUNDS[key] && `${MAC_SOUNDS[key]}.aiff`
+  if (system && existsSync(join(dirname(dirname(HELPER)), 'Resources', system))) return system
+  return HELPER_SOUNDS[key]
+}
+
 /** Builds the exact command for this platform. Returns null when nothing can deliver. */
 function buildPlan(o) {
   const os = platform()
@@ -497,7 +506,7 @@ function buildPlan(o) {
     if (notifier) {
       const args = ['-title', o.title, '-message', o.message]
       if (o.subtitle) args.push('-subtitle', o.subtitle)
-      if (o.sound) args.push('-sound', (notifier === HELPER ? HELPER_SOUNDS : MAC_SOUNDS)[o.soundKey] || 'default')
+      if (o.sound) args.push('-sound', (notifier === HELPER ? helperSound(o.soundKey) : MAC_SOUNDS[o.soundKey]) || 'default')
       if (o.group) args.push('-group', o.group)
       // The click command travels inside the notification itself, and nothing waits for
       // an answer. The earlier design kept one waiting terminal-notifier per notification;
