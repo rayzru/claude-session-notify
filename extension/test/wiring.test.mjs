@@ -201,6 +201,14 @@ test('copies only the system sounds that exist; with none, signs nothing', () =>
   assert.equal(none.calls.filter((c) => c[0] === 'codesign').length, 0)
 })
 
+test('a system sound that cannot be read counts as missing', () => {
+  const h = fresh()
+  const mac = fakeMac(h, { sounds: ['Glass.aiff', 'Ping.aiff'] })
+  mkdirSync(join(mac.soundsDir, 'Basso.aiff')) // exists, but reading it fails
+  assert.equal(w.installHelper(bundle(h), h, mac.deps), true)
+  assert.deepEqual(resources(h), ['Glass.aiff', 'Ping.aiff', 'done.wav'])
+})
+
 test('a macOS update that adds a system sound installs the app again', () => {
   const h = fresh()
   const mac = fakeMac(h, { sounds: ['Glass.aiff'] })

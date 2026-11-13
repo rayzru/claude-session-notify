@@ -160,9 +160,14 @@ export function installHelper(bundled: string, home: string, deps: HelperDeps = 
   if (!existsSync(binary(bundled))) return false // built without it: not on macOS
 
   const hash = sha256(binary(bundled))
+  // Read once, here: one that cannot be read counts as missing.
+  const soundData: Record<string, Buffer> = {}
   const sounds: Record<string, string> = {}
   for (const name of SYSTEM_SOUNDS) {
-    if (existsSync(join(soundsDir, name))) sounds[name] = sha256(join(soundsDir, name))
+    try {
+      soundData[name] = readFileSync(join(soundsDir, name))
+      sounds[name] = createHash('sha256').update(soundData[name]).digest('hex')
+    } catch {}
   }
   const stampPath = helperStampPath(home)
   const stamp = readJson(stampPath)
@@ -204,7 +209,7 @@ export function installHelper(bundled: string, home: string, deps: HelperDeps = 
       mkdirSync(resources, { recursive: true })
       // Read and written, not copied: a copy would carry extended attributes, which a
       // strict signature refuses.
-      for (const name of names) writeFileSync(join(resources, name), readFileSync(join(soundsDir, name)))
+      for (const name of names) writeFileSync(join(resources, name), soundData[name])
       if (ok(['--force', '--sign', '-', '--identifier', bundleId(bundled), staging]) && ok(['--verify', '--strict', staging])) {
         added = names
       } else {
